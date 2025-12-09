@@ -1,57 +1,160 @@
 class GeometryDash {
     constructor() {
         console.log('🎮 GeometryDash constructor called');
-        
+
         this.canvas = document.getElementById('gameCanvas');
         this.ctx = this.canvas.getContext('2d');
         this.scoreElement = document.getElementById('score');
         this.highScoreElement = document.getElementById('highScore');
         window.game = this;
-        
+
         if (!this.canvas) {
             console.error('❌ Canvas not found!');
             return;
         }
-        
+
         this.setupMobile();
         this.setupAudio();
         this.setupCanvas();
         this.initGame();
-        
-        this.highScore = localStorage.getItem('geometryDashHighScore') || 0;
+
+        this.highScore = parseInt(localStorage.getItem('geometryDashHighScore')) || 0;
         if (this.highScoreElement) {
             this.highScoreElement.textContent = `🏆 Рекорд: ${this.highScore}`;
         }
-        
+
         setTimeout(() => {
             this.setupEventListeners();
             this.isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
         }, 100);
-        
+
         console.log('✅ Game initialized for mobile');
     }
 
+    // ==================== АУДИО ====================
+    setupAudio() {
+        this.audioContext = null;
+        this.sounds = {
+            jump: { freq: 300, type: 'sine', duration: 0.1 },
+            score: { freq: 400, type: 'square', duration: 0.05 },
+            crash: { freq: 150, type: 'sawtooth', duration: 0.3 },
+            powerup: { freq: 600, type: 'triangle', duration: 0.2 }
+        };
+
+        this.initAudioOnFirstTouch();
+    }
+
+    initAudioOnFirstTouch() {
+        const initAudio = () => {
+            if (!this.audioContext) {
+                try {
+                    this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                    console.log('# Audio context initialized');
+                } catch (e) {
+                    console.log('X Audio not supported:', e);
+                }
+            }
+
+            document.removeEventListener('touchstart', initAudio);
+            document.removeEventListener('click', initAudio);
+        };
+
+        document.addEventListener('touchstart', initAudio, { once: true });
+        document.addEventListener('click', initAudio, { once: true });
+    }
+
+    playSound(soundName) {
+        if (!this.audioContext) return;
+
+        const sound = this.sounds[soundName];
+        if (!sound) return;
+
+        try {
+            const oscillator = this.audioContext.createOscillator();
+            const gainNode = this.audioContext.createGain();
+
+            oscillator.connect(gainNode);
+            gainNode.connect(this.audioContext.destination);
+
+            oscillator.frequency.value = sound.freq;
+            oscillator.type = sound.type;
+
+            gainNode.gain.setValueAtTime(0.1, this.audioContext.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.001, this.audioContext.currentTime + sound.duration);
+
+            oscillator.start(this.audioContext.currentTime);
+            oscillator.stop(this.audioContext.currentTime + sound.duration);
+        } catch (e) {
+            console.log("Audio error:", e);
+        }
+    }
+
+    // ==================== МОБИЛЬНАЯ ОПТИМИЗАЦИЯ ====================
+    setupMobile() {
+        document.addEventListener('touchmove', (e) => {
+            if (e.scale != 1) {
+                e.preventDefault();
+            }
+        }, { passive: false });
+
+        document.addEventListener('selectstart', (e) => {
+            e.preventDefault();
+        });
+
+        const viewport = document.querySelector('meta[name=viewport]');
+        if (viewport) {
+            viewport.setAttribute('content', 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no');
+        }
+    }
+
+    // ==================== УТИЛИТЫ ====================
+    darkenColor(color, percent) {
+        const num = parseInt(color.replace("#", ""), 16);
+        const amt = Math.round(2.55 * percent);
+        const R = (num >> 16) - amt;
+        const G = (num >> 8 & 0x00FF) - amt;
+        const B = (num & 0x0000FF) - amt;
+        return "#" + (0x1000000 +
+            (R < 255 ? R < 1 ? 0 : R : 255) * 0x10000 +
+            (G < 255 ? G < 1 ? 0 : G : 255) * 0x100 +
+            (B < 255 ? B < 1 ? 0 : B : 255)).toString(16).slice(1);
+    }
+
+    updateScore() {
+        if (this.scoreElement) {
+            this.scoreElement.textContent = `★ Очки: ${this.score}`;
+        }
+        if (this.score > this.highScore) {
+            this.highScore = this.score;
+            if (this.highScoreElement) {
+                this.highScoreElement.textContent = `🏆 Рекорд: ${this.highScore}`;
+            }
+            localStorage.setItem('geometryDashHighScore', this.highScore);
+        }
+    }
+
+    // ==================== ИГРОВЫЕ СОБЫТИЯ ====================
     jump() {
         console.log('🎮 JUMP METHOD CALLED, gameState:', this.gameState);
-        
+
         if (this.gameState !== 'playing') {
             console.log('⚠️ Cannot jump: game not playing');
             return;
         }
-        
+
         if (!this.player.isJumping) {
             console.log('✅ Player jumps!');
             this.player.velocityY = this.jumpForce;
             this.player.isJumping = true;
             this.player.rotation = -25;
             this.player.scale = 0.8;
-            
+
             // Эффекты прыжка
-            this.createParticleEffect(this.player.x + this.player.width/2, 
-                                     this.player.y + this.player.height, 
+            this.createParticleEffect(this.player.x + this.player.width/2,
+                                     this.player.y + this.player.height,
                                      8, '#FFFFFF');
             this.playSound('jump');
-            
+
             setTimeout(() => {
                 this.player.scale = 1;
             }, 100);
@@ -59,72 +162,81 @@ class GeometryDash {
             console.log('⚠️ Player already jumping');
         }
     }
-setupMobile() {
-    document.addEventListener('touchmove', (e) => {
-        if (e.scale != 1) {
-            e.preventDefault();
+
+    gameOver() {
+        this.gameState = 'gameover';
+
+        const gameOverScreen = document.getElementById('gameOverScreen');
+        const finalScore = document.getElementById('finalScore');
+        const menu = document.getElementById('menu');
+        const gameContainer = document.getElementById('gameContainer');
+
+        if (gameOverScreen) gameOverScreen.classList.remove('hidden');
+        if (finalScore) finalScore.textContent = `★ Очки: ${this.score}`;
+        if (menu) menu.classList.remove('hidden');
+        if (gameContainer) {
+            gameContainer.classList.remove('playing');
         }
-    }, { passive: false });
 
-    document.addEventListener('selectstart', (e) => {
-        e.preventDefault();
-    });
-
-    const viewport = document.querySelector('meta[name=viewport]');
-    if (viewport) {
-        viewport.setAttribute('content', 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no');
+        this.screenShake = 2;
+        this.createParticleEffect(this.player.x + this.player.width/2, this.player.y + this.player.height/2, 30, '#FF0000');
+        this.playSound('crash');
+        this.sendScoreToBot();
     }
-}setupAudio() {
-    this.audioContext = null;
-    this.sounds = {
-        jump: { freq: 300, type: 'sine', duration: 0.1 },
-        score: { freq: 400, type: 'square', duration: 0.05 },
-        crash: { freq: 150, type: 'sawtooth', duration: 0.3 },
-        powerup: { freq: 600, type: 'triangle', duration: 0.2 }
-    };
 
-    this.initAudioOnFirstTouch();
-}
+    restartGame() {
+        const gameContainer = document.getElementById('gameContainer');
+        if (gameContainer) {
+            gameContainer.classList.add('playing');
+        }
+        const menu = document.getElementById('menu');
+        if (menu) {
+            menu.classList.add('hidden');
+        }
 
-initAudioOnFirstTouch() {
-    const initAudio = () => {
-        if (!this.audioContext) {
-            try {
-                this.audioContext = new (window.AudioContext || window.webkitAudioContext());
-                console.log('# Audio context initialized');
-            } catch (e) {
-                console.log('X Audio not supported:', e);
+        this.currentTheme = (this.currentTheme + 1) % this.colorThemes.length;
+        this.initGame();
+        this.startGame();
+    }
+
+    shareScore() {
+        const shareText = `Я набрал ${this.score} очков в Geometry Dash Ultimate!`;
+        if (navigator.share) {
+            navigator.share({
+                title: 'Geometry Dash Ultimate',
+                text: shareText
+            });
+        } else {
+            alert(shareText);
+        }
+    }
+
+    sendScoreToBot() {
+        try {
+            if (window.Telegram && Telegram.WebApp) {
+                Telegram.WebApp.sendData(JSON.stringify({
+                    action: 'game_score',
+                    score: this.score,
+                    highScore: this.highScore
+                }));
             }
+        } catch (e) {
+            console.log('Cannot send data to bot:', e);
         }
-    };
-
-    document.addEventListener('touchstart', initAudio, { once: true });
-    document.addEventListener('click', initAudio, { once: true });
-}playSound(soundName) {
-    if (!this.audioContext) return;
-
-    const sound = this.sounds[soundName];
-    if (!sound) return;
-
-    try {
-        const oscillator = this.audioContext.createOscillator();
-        const gainNode = this.audioContext.createGain();
-
-        oscillator.connect(gainNode);
-        gainNode.connect(this.audioContext.destination);
-
-        oscillator.frequency.value = sound.freq;
-        oscillator.type = sound.type;
-
-        gainNode.gain.setValueAtTime(0.1, this.audioContext.currentTime);
-        gainNode.gain.exponentialRampToValueAtTime(0.001, this.audioContext.currentTime + sound.duration);
-
-        oscillator.start(this.audioContext.currentTime);
-        oscillator.stop(this.audioContext.currentTime + sound.duration);
-    } catch (e) {
-        console.log("Audio error:", e);
     }
-}setupCanvas() {
+
+    // ==================== ГЛАВНЫЙ ЦИКЛ ====================
+    gameLoop() {
+        this.update();
+        this.draw();
+
+        if (this.gameState === 'playing') {
+            requestAnimationFrame(() => this.gameLoop());
+        }
+    }
+
+    // ==================== НИЖЕ ДОБАВИТЬ ОСТАЛЬНЫЕ МЕТОДЫ ====================
+    setupCanvas() {
         this.canvas.width = window.innerWidth;
         this.canvas.height = window.innerHeight;
 
@@ -223,9 +335,7 @@ initAudioOnFirstTouch() {
     }
 
     setupCanvasControls() {
-
         const handleJump = (e) => {
-
             if (e.type === 'touchstart') {
                 e.preventDefault();
             }
@@ -282,31 +392,6 @@ initAudioOnFirstTouch() {
         setTimeout(() => {
             document.body.removeChild(effect);
         }, 500);
-    }
-
-    setupSwipeControls() {
-        let startX, startY;
-
-        this.canvas.addEventListener('touchstart', (e) => {
-            startX = e.touches[0].clientX;
-            startY = e.touches[0].clientY;
-        }, { passive: true });
-
-        this.canvas.addEventListener('touchend', (e) => {
-            if (!startX || !startY) return;
-
-            const endX = e.changedTouches[0].clientX;
-            const endY = e.changedTouches[0].clientY;
-
-            const diffX = endX - startX;
-            const diffY = endY - startY;
-
-            if (Math.abs(diffY) > Math.abs(diffX) && diffY < -30) {
-                this.jump();
-            }
-
-            startX = startY = null;
-        }, { passive: true });
     }
 
     startGame() {
@@ -507,7 +592,7 @@ initAudioOnFirstTouch() {
         });
     }
 
-   checkCollision(player, object) {
+    checkCollision(player, object) {
         return player.x < object.x + object.width &&
                player.x + player.width > object.x &&
                player.y < object.y + object.height &&
@@ -644,96 +729,8 @@ initAudioOnFirstTouch() {
 
         this.ctx.restore();
     }
-darkenColor(color, percent) {
-    const num = parseInt(color.replace("#", ""), 16);
-    const amt = Math.round(2.55 * percent);
-    const R = (num >> 16) - amt;
-    const G = (num >> 8 & 0x00FF) - amt;
-    const B = (num & 0x0000FF) - amt;
-    return "#" + (0x1000000 + (R < 255 ? R < 1 ? 0 : R : 255) * 0x10000 +
-    (G < 255 ? G < 1 ? 0 : G : 255) * 0x100 +
-    (B < 255 ? B < 1 ? 0 : B : 255)).toString(16).slice(1);
 }
 
-updateScore() {
-    if (this.scoreElement) {
-        this.scoreElement.textContent = '★ Oчки: ${this.score}';
-    }
-    if (this.score > this.highScore) {
-        this.highScore = this.score;
-        if (this.highScoreElement) {
-            this.highScoreElement.textContent = '♀ Pekopa: ${this.highScore}';
-        }
-        localStorage.setItem('geometryDashHighScore', this.highScore);
-    }
-}gameOver() {
-    this.gameState = 'gameover';
-
-    const gameOverScreen = document.getElementById('gameOverScreen');
-    const finalScore = document.getElementById('finalScore');
-    const menu = document.getElementById('menu');
-    const gameContainer = document.getElementById('gameContainer');
-
-    if (gameOverScreen) gameOverScreen.classList.remove('hidden');
-    if (finalScore) finalScore.textContent = ' * QWXW: ${this_score}';
-    if (menu) menu.classList.remove('hidden');
-    if (gameContainer) {
-        gameContainer.classList.remove('playing');
-    }
-
-    this.screenShake = 2;
-    this.createParticleEffect(this.player.x + this.player.width/2, this.player.y + this.player.height/2, 30, '#FF10000');
-    this.playSound('crash');
-    this.sendScoreToBot();
-}
-restartGame() {
-    const gameContainer = document.getElementById('gameContainer');
-    if (gameContainer) {
-        gameContainer.classList.add('playing');
-    }
-    const menu = document.getElementById('menu');
-    if (menu) {
-        menu.classList.add('hidden');
-    }
-
-    this.currentTheme = (this.currentTheme + 1) % this.colorThemes.length;
-    this.initGame();
-    this.startGame();
-}
-
-shareScore() {
-    const shareText = `Я набрал ${this.score} очков в Geometry Dash Ultimate!`;
-    if (navigator.share) {
-        navigator.share({
-            title: 'Geometry Dash Ultimate',
-            text: shareText
-        });
-    } else {
-        alert(shareText);
-    }
-}
-sendScoreToBot() {
-    try {
-        if (window.Telegram && Telegram.WebApp) {
-            Telegram.WebApp.sendData(JSON.stringify({
-                action: 'game_score',
-                score: this.score,
-                highScore: this.highScore
-            }));
-        }
-    } catch (e) {
-        console.log('Cannot send data to bot:', e);
-    }
-}
-
-gameLoop() {
-    this.update();
-    this.draw();
-
-    if (this.gameState == 'playing') {
-        requestAnimationFrame(() => this.gameLoop());
-    }
-}
 // Инициализация
 function initializeGame() {
     console.log('🚀 INITIALIZING GAME...');
